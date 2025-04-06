@@ -1,12 +1,13 @@
 {
   "name": "smart-trading-bot",
   "version": "1.0.0",
-  "description": "Smart Trading Bot V4",
+  "description": "Trading Signal Bot - Forex & Crypto with Advanced Analysis",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "axios": "^1.6.5"
+    "axios": "^1.6.0",
+    "technicalindicators": "^3.1.0"
   }
 }
