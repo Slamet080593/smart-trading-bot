@@ -1,24 +1,20 @@
-name: Run SmartBot every hour
+name: Trading Signal Bot
 
 on:
   schedule:
-    - cron: '0 * * * *' # tiap jam
+    - cron: '0 * * * *' # setiap 1 jam
   workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
+      - uses: actions/checkout@v4
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
-
-      - name: Install Dependencies
-        run: npm install axios
-
-      - name: Run Bot
-        run: node index.js
+      - name: Install dependencies
+        run: npm install
+      - name: Run bot
+        run: npm start
