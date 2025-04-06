@@ -1,6 +1,6 @@
 require('dotenv').config();
 const axios = require('axios');
-const { RSI } = require('technicalindicators');
+const { SMA, EMA, RSI, MACD, BollingerBands } = require('technicalindicators');
 
 // === SETTING ===
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
@@ -24,17 +24,26 @@ async function fetchForexData() {
   }
 }
 
-// === RELAXED AMD LOGIC ===
-function relaxedAMDStrategy(prices) {
-  const rsiValues = RSI.calculate({ period: 14, values: prices });
-  const rsi = rsiValues[rsiValues.length - 1];
+// === ANALISA FUNCTION ===
+function simpleTechnicalAnalysis(prices) {
+  const sma = SMA.calculate({ period: 14, values: prices });
+  const ema = EMA.calculate({ period: 14, values: prices });
+  const rsi = RSI.calculate({ period: 14, values: prices });
+  const macd = MACD.calculate({
+    values: prices,
+    fastPeriod: 12,
+    slowPeriod: 26,
+    signalPeriod: 9,
+    SimpleMAOscillator: false,
+    SimpleMASignal: false
+  });
+  const bb = BollingerBands.calculate({
+    period: 20,
+    values: prices,
+    stdDev: 2
+  });
 
-  if (!rsi) return null;
-
-  if (rsi < 35) return "BUY";
-  if (rsi > 65) return "SELL";
-
-  return null;
+  return { sma, ema, rsi, macd, bb };
 }
 
 // === TELEGRAM FUNCTION ===
@@ -65,13 +74,25 @@ async function main() {
           const price = forexRates[quote] / forexRates[base];
           const prices = Array(30).fill(price); // Dummy data
 
-          const action = relaxedAMDStrategy(prices);
+          const { rsi } = simpleTechnicalAnalysis(prices);
+          const latestRSI = rsi[rsi.length - 1];
+
+          let action = null;
+          let reason = "";
+
+          if (latestRSI < 35) {
+            action = "BUY";
+            reason = "RSI < 35 → kondisi oversold";
+          } else if (latestRSI > 65) {
+            action = "SELL";
+            reason = "RSI > 65 → kondisi overbought";
+          }
 
           if (action) {
-            const tp = (action === 'BUY' ? price * 1.002 : price * 0.998).toFixed(4);
-            const sl = (action === 'BUY' ? price * 0.998 : price * 1.002).toFixed(4);
+            const tp = (price * (action === "BUY" ? 1.002 : 0.998)).toFixed(4);
+            const sl = (price * (action === "BUY" ? 0.998 : 1.002)).toFixed(4);
 
-            message += `<b>${pair}</b>\n📊 Forex Signal\nAksi: ${action}\nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
+            message += `<b>${pair}</b>\n📊 Forex Signal\nAksi: ${action} (${reason})\nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
             hasSignal = true;
           }
         } else {
