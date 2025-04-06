@@ -1,36 +1,26 @@
-// ===== index.js FINAL =====
-
 const axios = require('axios');
 
-// Load dari environment variables (GitHub Secrets)
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const TWELVE_API_KEY = process.env.TWELVE_API_KEY;
+// --- SETTINGAN ---
+const TELEGRAM_TOKEN = '7086211397:AAGotudtgcHMhiS0d79k840IN_fMhH5QAnE';
+const CHAT_ID = '1775772121';
+const TWELVE_API_KEY = '6c8dca5076544546aabd5fb36c9895e2';
 
-// Forex Pair
-const forexPairs = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CHF', 'EUR/CHF', 'NZD/USD', 'USD/CAD', 'XAU/USD', 'XAG/USD'];
-// Crypto Coin
-const cryptoCoins = ['bitcoin', 'ethereum', 'binancecoin', 'ripple', 'solana'];
+const forexPairs = [
+  'EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CHF',
+  'EUR/CHF', 'NZD/USD', 'USD/CAD', 'EUR/JPY', 'GBP/JPY'
+];
 
-// Threshold
-const RSI_OVERSOLD = 30;
-const RSI_OVERBOUGHT = 70;
+const cryptoIds = ['bitcoin', 'ethereum', 'binancecoin', 'solana', 'ripple'];
 
-// FUNCTION
-async function getForexData(symbol) {
+// --- FUNGSI UTAMA ---
+async function getForexData(pair) {
   try {
-    const [base, quote] = symbol.split('/');
-    const response = await axios.get(`https://api.twelvedata.com/time_series`, {
-      params: {
-        symbol: `${base}/${quote}`,
-        interval: '1h',
-        outputsize: 100,
-        apikey: TWELVE_API_KEY
-      }
-    });
-    return response.data.values.map(item => parseFloat(item.close));
+    const symbol = pair.replace('/', '');
+    const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=1h&apikey=${TWELVE_API_KEY}&outputsize=50`;
+    const response = await axios.get(url);
+    return response.data.values.map(val => parseFloat(val.close)).reverse();
   } catch (err) {
-    console.error(`Error Forex ${symbol}:`, err.message);
+    console.error(`Error Forex ${pair}:`, err.message);
     return null;
   }
 }
@@ -42,6 +32,9 @@ async function getCryptoData(coinId) {
         vs_currency: 'usd',
         days: 1,
         interval: 'hourly'
+      },
+      headers: {
+        'User-Agent': 'Mozilla/5.0'
       }
     });
     return response.data.prices.map(price => price[1]);
@@ -51,95 +44,75 @@ async function getCryptoData(coinId) {
   }
 }
 
-function calculateSMA(data, period = 14) {
-  if (data.length < period) return null;
-  const subset = data.slice(-period);
-  const sum = subset.reduce((a, b) => a + b, 0);
-  return sum / period;
-}
-
-function calculateRSI(data, period = 14) {
-  if (data.length < period + 1) return null;
+// --- TEKNIK ANALISA ---
+function calculateRSI(prices, period = 14) {
   let gains = 0, losses = 0;
-  for (let i = data.length - period; i < data.length - 1; i++) {
-    const diff = data[i + 1] - data[i];
+  for (let i = prices.length - period; i < prices.length - 1; i++) {
+    const diff = prices[i + 1] - prices[i];
     if (diff >= 0) gains += diff;
     else losses -= diff;
   }
-  const rs = gains / (losses || 1);
+  if (losses === 0) return 100;
+  const rs = gains / losses;
   return 100 - (100 / (1 + rs));
 }
 
-function calculateMACD(data, shortPeriod = 12, longPeriod = 26) {
-  if (data.length < longPeriod) return null;
-  const shortEMA = calculateSMA(data.slice(-shortPeriod));
-  const longEMA = calculateSMA(data.slice(-longPeriod));
-  return shortEMA - longEMA;
+function calculateSMA(prices, period) {
+  const slice = prices.slice(-period);
+  const sum = slice.reduce((acc, val) => acc + val, 0);
+  return sum / period;
 }
 
-async function analyze(symbol, data) {
-  const rsi = calculateRSI(data);
-  const macd = calculateMACD(data);
-  const sma = calculateSMA(data);
+function analyzeSignal(prices) {
+  if (!prices || prices.length < 20) return null;
+  
+  const rsi = calculateRSI(prices);
+  const smaShort = calculateSMA(prices, 5);
+  const smaLong = calculateSMA(prices, 20);
+  const lastPrice = prices[prices.length - 1];
 
-  if (rsi === null || macd === null || sma === null) return null;
-
-  if (rsi < RSI_OVERSOLD && macd > 0 && data[data.length - 1] > sma) {
-    return { action: 'BUY', price: data[data.length - 1] };
-  }
-  if (rsi > RSI_OVERBOUGHT && macd < 0 && data[data.length - 1] < sma) {
-    return { action: 'SELL', price: data[data.length - 1] };
-  }
+  if (rsi < 30 && smaShort > smaLong) return { action: 'BUY', price: lastPrice };
+  if (rsi > 70 && smaShort < smaLong) return { action: 'SELL', price: lastPrice };
   return null;
 }
 
-async function main() {
-  let messages = [];
-
-  // Forex
-  for (const pair of forexPairs) {
-    const data = await getForexData(pair);
-    if (!data) continue;
-    const result = await analyze(pair, data);
-    if (result) {
-      messages.push(`${result.action} ${pair} at ${result.price.toFixed(5)} ➔ Target ${result.action == 'BUY' ? (result.price * 1.001).toFixed(5) : (result.price * 0.999).toFixed(5)} (Hold 1-2 jam)`);
-    }
-  }
-
-  // Crypto
-  for (const coin of cryptoCoins) {
-    const data = await getCryptoData(coin);
-    if (!data) continue;
-    const result = await analyze(coin, data);
-    if (result) {
-      messages.push(`${result.action} ${coin.toUpperCase()} at ${result.price.toFixed(2)} ➔ Target ${result.action == 'BUY' ? (result.price * 1.01).toFixed(2) : (result.price * 0.99).toFixed(2)} (Hold 1-2 jam)`);
-    }
-  }
-
-  let finalMessage = '';
-
-  if (messages.length > 0) {
-    finalMessage = `Sinyal Trading:\n\n${messages.map((m, i) => `${i + 1}. ${m}`).join('\n')}\n\nAuto generated by SmartBot.`;
-  } else {
-    finalMessage = `yah ga ada sinyal bosku.\n\nAuto generated by SmartBot.`;
-  }
-
-  await sendTelegram(finalMessage);
+// --- TELEGRAM ---
+async function sendTelegramMessage(message) {
+  const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+  await axios.post(url, {
+    chat_id: CHAT_ID,
+    text: message
+  });
 }
 
-async function sendTelegram(text) {
-  try {
-    await axios({
-      url: `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`,
-      method: 'POST',
-      data: {
-        chat_id: TELEGRAM_CHAT_ID,
-        text: text
-      }
-    });
-  } catch (err) {
-    console.error('Error kirim Telegram:', err.message);
+// --- MAIN ---
+async function main() {
+  let signals = [];
+
+  for (let pair of forexPairs) {
+    const data = await getForexData(pair);
+    const signal = analyzeSignal(data);
+    if (signal) {
+      signals.push(`${signal.action} ${pair} at ${signal.price.toFixed(5)} ➔ Target ${(signal.price * (signal.action === 'BUY' ? 1.002 : 0.998)).toFixed(5)} (Hold 1-2 jam)`);
+    }
   }
+
+  for (let coin of cryptoIds) {
+    const data = await getCryptoData(coin);
+    const signal = analyzeSignal(data);
+    if (signal) {
+      signals.push(`${signal.action} ${coin.toUpperCase()} at ${signal.price.toFixed(2)} ➔ Target ${(signal.price * (signal.action === 'BUY' ? 1.02 : 0.98)).toFixed(2)} (Hold 1-2 jam)`);
+    }
+  }
+
+  let message;
+  if (signals.length === 0) {
+    message = `yah ga ada sinyal bosku.`;
+  } else {
+    message = `Sinyal Trading:\n\n` + signals.map((s, i) => `${i + 1}. ${s}`).join('\n\n') + `\n\nAuto generated by SmartBot.`;
+  }
+
+  await sendTelegramMessage(message);
 }
 
 main();
