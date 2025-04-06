@@ -1,4 +1,4 @@
-name: Trading Signal Bot
+name: Run Trading Bot
 
 on:
   schedule:
@@ -8,13 +8,15 @@ on:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    env:
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      TWELVE_API_KEY: ${{ secrets.TWELVE_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v3
         with:
-          node-version: '18'
-      - name: Install dependencies
-        run: npm install
-      - name: Run bot
-        run: npm start
+          node-version: '20'
+      - run: npm install
+      - run: node index.js
