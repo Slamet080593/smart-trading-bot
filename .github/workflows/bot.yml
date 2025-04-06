@@ -1,0 +1,24 @@
+name: Trading Bot Auto
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Setiap 1 jam
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Install Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install Dependencies
+      run: npm install axios
+
+    - name: Run Bot
+      run: node bot.js
