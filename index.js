@@ -80,7 +80,7 @@ async function main() {
           const tp = (price * 1.002).toFixed(4); // +0.2%
           const sl = (price * 0.998).toFixed(4); // -0.2%
 
-          message += `<b>${pair}</b>\nPrice: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
+          message += `<b>${pair}</b>\n📊 Crypto Signal\nAksi: \nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
           hasSignal = true;
         } else {
           console.error(`Data kosong untuk pasangan ${pair}`);
