@@ -46,6 +46,21 @@ function simpleTechnicalAnalysis(prices) {
   return { sma, ema, rsi, macd, bb };
 }
 
+// === AMD SETUP DETECTION ===
+function detectAMD(prices, analysis) {
+  const latestRSI = analysis.rsi[analysis.rsi.length - 1];
+  const latestBB = analysis.bb[analysis.bb.length - 1];
+  const latestMACD = analysis.macd[analysis.macd.length - 1];
+
+  const price = prices[prices.length - 1];
+
+  const accumulation = (analysis.bb.length > 0 && (latestBB.upper - latestBB.lower) / latestBB.lower < 0.01);
+  const manipulation = (price > latestBB.upper || price < latestBB.lower);
+  const directionalMove = (latestMACD && Math.abs(latestMACD.MACD - latestMACD.signal) > 0.001);
+
+  return accumulation && manipulation && directionalMove;
+}
+
 // === TELEGRAM FUNCTION ===
 async function sendTelegram(message) {
   try {
@@ -62,7 +77,8 @@ async function sendTelegram(message) {
 
 // === MAIN EXECUTION ===
 async function main() {
-  let message = "Sinyal Trading Forex:\n\n";
+  let message = "Sinyal Trading Forex:
+\n";
   let hasSignal = false;
 
   const forexRates = await fetchForexData();
@@ -75,29 +91,18 @@ async function main() {
           const prices = Array(30).fill(price); // Dummy data
 
           const analysis = simpleTechnicalAnalysis(prices);
+          const amdSignal = detectAMD(prices, analysis);
 
-          const latestRSI = analysis.rsi[analysis.rsi.length - 1];
-          const latestSMA = analysis.sma[analysis.sma.length - 1];
+          // Ambil nilai TP dan SL dummy contoh
+          const tp = (price * 1.002).toFixed(4); // +0.2%
+          const sl = (price * 0.998).toFixed(4); // -0.2%
 
-          // Tentukan aksi
-          let action = '';
-          if (latestRSI && latestSMA) {
-            if (latestRSI < 30 && price < latestSMA) {
-              action = 'BUY';
-            } else if (latestRSI > 70 && price > latestSMA) {
-              action = 'SELL';
-            }
-          }
+          const action = amdSignal ? (price < analysis.bb[analysis.bb.length - 1].lower ? 'BUY' : 'SELL') : 'No clear signal';
 
-          if (action) {
-            // Ambil nilai TP dan SL
-            const tp = (action === 'BUY' ? price * 1.002 : price * 0.998).toFixed(4);
-            const sl = (action === 'BUY' ? price * 0.998 : price * 1.002).toFixed(4);
-
-            message += `<b>${pair}</b>\n📊 Forex Signal\nAksi: <b>${action}</b>\nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
+          if (amdSignal) {
+            message += `<b>${pair}</b>\n📊 Crypto Signal\nAksi: ${action}\nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
             hasSignal = true;
           }
-
         } else {
           console.error(`Data kosong untuk pasangan ${pair}`);
         }
