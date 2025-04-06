@@ -25,9 +25,9 @@ async function fetchForexData() {
 }
 
 // === ANALISA FUNCTION ===
-function simpleTechnicalAnalysis(prices) {
-  const sma = SMA.calculate({ period: 14, values: prices });
-  const ema = EMA.calculate({ period: 14, values: prices });
+function advancedAnalysis(prices) {
+  const sma14 = SMA.calculate({ period: 14, values: prices });
+  const sma50 = SMA.calculate({ period: 50, values: prices });
   const rsi = RSI.calculate({ period: 14, values: prices });
   const macd = MACD.calculate({
     values: prices,
@@ -43,7 +43,7 @@ function simpleTechnicalAnalysis(prices) {
     stdDev: 2
   });
 
-  return { sma, ema, rsi, macd, bb };
+  return { sma14, sma50, rsi, macd, bb };
 }
 
 // === TELEGRAM FUNCTION ===
@@ -72,16 +72,42 @@ async function main() {
       try {
         if (forexRates[base] && forexRates[quote]) {
           const price = forexRates[quote] / forexRates[base];
-          const prices = Array(30).fill(price); // Dummy data
+          const prices = Array(60).fill(price); // Dummy data untuk indikator panjang
 
-          const analysis = simpleTechnicalAnalysis(prices);
+          const { sma14, sma50, rsi, macd, bb } = advancedAnalysis(prices);
 
-          // Ambil nilai TP dan SL dummy contoh
-          const tp = (price * 1.002).toFixed(4); // +0.2%
-          const sl = (price * 0.998).toFixed(4); // -0.2%
+          const lastRSI = rsi[rsi.length - 1];
+          const lastSMA14 = sma14[sma14.length - 1];
+          const lastSMA50 = sma50[sma50.length - 1];
+          const lastMACD = macd[macd.length - 1];
+          const prevMACD = macd[macd.length - 2];
+          const lastBB = bb[bb.length - 1];
 
-          message += `<b>${pair}</b>\n📊 Crypto Signal\nAksi: \nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
-          hasSignal = true;
+          let action = null;
+
+          // === BUY Logic ===
+          const isMACDBuy = prevMACD.MACD < prevMACD.signal && lastMACD.MACD > lastMACD.signal;
+          const isBollingerBuy = price <= lastBB.lower;
+
+          if (lastRSI < 35 && price < lastSMA50 && isMACDBuy && isBollingerBuy) {
+            action = 'BUY';
+          }
+
+          // === SELL Logic ===
+          const isMACDSell = prevMACD.MACD > prevMACD.signal && lastMACD.MACD < lastMACD.signal;
+          const isBollingerSell = price >= lastBB.upper;
+
+          if (lastRSI > 65 && price > lastSMA50 && isMACDSell && isBollingerSell) {
+            action = 'SELL';
+          }
+
+          if (action) {
+            const tp = (action === 'BUY' ? price * 1.002 : price * 0.998).toFixed(4);
+            const sl = (action === 'BUY' ? price * 0.998 : price * 1.002).toFixed(4);
+
+            message += `<b>${pair}</b>\n📊 Crypto Signal\nAksi: ${action}\nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
+            hasSignal = true;
+          }
         } else {
           console.error(`Data kosong untuk pasangan ${pair}`);
         }
