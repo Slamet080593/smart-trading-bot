@@ -1,13 +1,14 @@
 {
-  "name": "trading-bot-v4",
+  "name": "smartbot-signal",
   "version": "1.0.0",
-  "description": "Smart Trading Bot v4",
+  "description": "SmartBot Auto Signal Forex & Crypto",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "axios": "^1.6.2",
-    "technicalindicators": "^3.0.0"
+    "axios": "^1.6.0",
+    "technicalindicators": "^3.0.3",
+    "dotenv": "^16.3.1"
   }
 }
