@@ -5,29 +5,35 @@ const { SMA, EMA, RSI, MACD, BollingerBands } = require('technicalindicators');
 // === SETTING ===
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+const TWELVE_DATA_API_KEY = process.env.TWELVE_DATA_API_KEY;
 
-// Forex Pairs
 const forexPairs = [
   "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF",
   "EUR/CHF", "AUD/USD", "NZD/USD",
   "EUR/JPY", "GBP/JPY", "AUD/JPY"
 ];
 
-// === FETCH FUNCTION ===
-async function fetchForexData() {
+// === FETCH HISTORICAL DATA ===
+async function fetchHistoricalPrices(pair) {
+  const symbol = pair.replace("/", "");
+  const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=1h&outputsize=60&apikey=${TWELVE_DATA_API_KEY}`;
+
   try {
-    const res = await axios.get('https://open.er-api.com/v6/latest/USD');
-    return res.data.rates;
-  } catch (error) {
-    console.error("Error fetching Forex data:", error.message);
+    const res = await axios.get(url);
+    const data = res.data?.values;
+    if (!data) throw new Error(res.data.message || "No data");
+    const prices = data.map(item => parseFloat(item.close)).reverse();
+    return prices;
+  } catch (err) {
+    console.error(`❌ Error fetch ${pair}:`, err.message);
     return null;
   }
 }
 
-// === ANALISA FUNCTION ===
-function advancedAnalysis(prices) {
-  const sma14 = SMA.calculate({ period: 14, values: prices });
+// === ANALISIS ===
+function simpleTechnicalAnalysis(prices) {
   const sma50 = SMA.calculate({ period: 50, values: prices });
+  const ema14 = EMA.calculate({ period: 14, values: prices });
   const rsi = RSI.calculate({ period: 14, values: prices });
   const macd = MACD.calculate({
     values: prices,
@@ -43,10 +49,10 @@ function advancedAnalysis(prices) {
     stdDev: 2
   });
 
-  return { sma14, sma50, rsi, macd, bb };
+  return { sma50, ema14, rsi, macd, bb };
 }
 
-// === TELEGRAM FUNCTION ===
+// === TELEGRAM ===
 async function sendTelegram(message) {
   try {
     await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
@@ -54,66 +60,51 @@ async function sendTelegram(message) {
       text: message,
       parse_mode: 'HTML'
     });
-    console.log("Sinyal Forex berhasil dikirim!");
-  } catch (error) {
-    console.error("Gagal kirim Telegram:", error.message);
+    console.log("✅ Sinyal dikirim");
+  } catch (err) {
+    console.error("❌ Gagal kirim Telegram:", err.message);
   }
 }
 
-// === MAIN EXECUTION ===
+// === SIGNAL LOGIC ===
+function generateSignal(price, rsi, macd, bb) {
+  const macdHist = macd[macd.length - 1]?.histogram || 0;
+  const rsiVal = rsi[rsi.length - 1];
+  const bbLast = bb[bb.length - 1];
+
+  if (rsiVal < 30 && macdHist > 0 && price < bbLast.lower) {
+    return "BUY";
+  } else if (rsiVal > 70 && macdHist < 0 && price > bbLast.upper) {
+    return "SELL";
+  }
+  return null;
+}
+
+// === MAIN ===
 async function main() {
-  let message = "Sinyal Trading Forex:\n\n";
+  let message = "📊 <b>Sinyal Trading Forex:</b>\n\n";
   let hasSignal = false;
 
-  const forexRates = await fetchForexData();
-  if (forexRates) {
-    for (const pair of forexPairs) {
-      const [base, quote] = pair.split('/');
-      try {
-        if (forexRates[base] && forexRates[quote]) {
-          const price = forexRates[quote] / forexRates[base];
-          const prices = Array(60).fill(price); // Dummy data untuk indikator panjang
+  for (const pair of forexPairs) {
+    const prices = await fetchHistoricalPrices(pair);
+    if (!prices || prices.length < 30) continue;
 
-          const { sma14, sma50, rsi, macd, bb } = advancedAnalysis(prices);
+    const analysis = simpleTechnicalAnalysis(prices);
+    const price = prices[prices.length - 1];
+    const signal = generateSignal(price, analysis.rsi, analysis.macd, analysis.bb);
 
-          const lastRSI = rsi[rsi.length - 1];
-          const lastSMA14 = sma14[sma14.length - 1];
-          const lastSMA50 = sma50[sma50.length - 1];
-          const lastMACD = macd[macd.length - 1];
-          const prevMACD = macd[macd.length - 2];
-          const lastBB = bb[bb.length - 1];
+    if (signal) {
+      const tp = signal === 'BUY' ? price * 1.002 : price * 0.998;
+      const sl = signal === 'BUY' ? price * 0.998 : price * 1.002;
 
-          let action = null;
+      message += `
+<b>${pair}</b>
+Aksi: ${signal}
+Entry: ${price.toFixed(4)}
+TP: ${tp.toFixed(4)}
+SL: ${sl.toFixed(4)}\n\n`;
 
-          // === BUY Logic ===
-          const isMACDBuy = prevMACD.MACD < prevMACD.signal && lastMACD.MACD > lastMACD.signal;
-          const isBollingerBuy = price <= lastBB.lower;
-
-          if (lastRSI < 35 && price < lastSMA50 && isMACDBuy && isBollingerBuy) {
-            action = 'BUY';
-          }
-
-          // === SELL Logic ===
-          const isMACDSell = prevMACD.MACD > prevMACD.signal && lastMACD.MACD < lastMACD.signal;
-          const isBollingerSell = price >= lastBB.upper;
-
-          if (lastRSI > 65 && price > lastSMA50 && isMACDSell && isBollingerSell) {
-            action = 'SELL';
-          }
-
-          if (action) {
-            const tp = (action === 'BUY' ? price * 1.002 : price * 0.998).toFixed(4);
-            const sl = (action === 'BUY' ? price * 0.998 : price * 1.002).toFixed(4);
-
-            message += `<b>${pair}</b>\n📊 Crypto Signal\nAksi: ${action}\nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
-            hasSignal = true;
-          }
-        } else {
-          console.error(`Data kosong untuk pasangan ${pair}`);
-        }
-      } catch (error) {
-        console.error(`Error processing Forex ${pair}:`, error.message);
-      }
+      hasSignal = true;
     }
   }
 
