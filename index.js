@@ -1,111 +1,101 @@
 const axios = require('axios');
+const ti = require('technicalindicators');
 
-// Ambil API Key dari Environment (Secret Github)
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const TWELVE_API_KEY = process.env.TWELVE_API_KEY;
 
-const forexPairs = [
-  'EUR/USD', 'GBP/USD', 'USD/JPY', 'USD/CHF', 'EUR/CHF',
-  'AUD/USD', 'NZD/USD', 'EUR/JPY', 'GBP/JPY', 'AUD/JPY'
-];
+// Forex & Crypto List
+const forexPairs = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'EURCHF', 'AUDUSD', 'NZDUSD', 'EURJPY', 'GBPJPY', 'AUDJPY'];
+const cryptoCoins = ['bitcoin', 'ethereum', 'binancecoin', 'solana', 'ripple'];
 
-const cryptoList = [
-  'bitcoin', 'ethereum', 'binancecoin', 'solana', 'ripple'
-];
-
-async function getForexData(pair) {
+async function fetchForexData(pair) {
   try {
-    const symbol = pair.replace('/', '');
-    const response = await axios.get(`https://api.twelvedata.com/time_series`, {
-      params: {
-        symbol: symbol,
-        interval: '1h',
-        apikey: TWELVE_API_KEY
-      }
-    });
-
-    if (response.data && response.data.values) {
-      return response.data.values;
-    } else {
-      console.error(`Error Forex ${pair}: Data kosong`);
-      return null;
+    const url = `https://api.twelvedata.com/time_series?symbol=${pair}&interval=1h&outputsize=50&apikey=${process.env.FOREX_API_KEY}`;
+    const response = await axios.get(url);
+    if (response.data.values) {
+      return response.data.values.map(candle => ({
+        close: parseFloat(candle.close),
+        open: parseFloat(candle.open),
+        high: parseFloat(candle.high),
+        low: parseFloat(candle.low)
+      }));
     }
+    console.error(`Error Forex ${pair}: Data kosong`);
+    return null;
   } catch (error) {
     console.error(`Error Forex ${pair}:`, error.message);
     return null;
   }
 }
 
-async function getCryptoData(coin) {
+async function fetchCryptoData(coin) {
   try {
-    const response = await axios.get(`https://api.coingecko.com/api/v3/coins/${coin}/market_chart`, {
-      params: {
-        vs_currency: 'usd',
-        days: '1',
-        interval: 'hourly'
-      }
-    });
-
-    if (response.data && response.data.prices) {
-      return response.data.prices.map(p => ({
-        datetime: new Date(p[0]).toISOString(),
-        close: p[1]
+    const url = `https://api.coingecko.com/api/v3/coins/${coin}/market_chart?vs_currency=usd&days=1&interval=hourly`;
+    const response = await axios.get(url);
+    if (response.data.prices) {
+      return response.data.prices.map(item => ({
+        close: item[1]
       }));
-    } else {
-      console.error(`Error Crypto ${coin}: Data kosong`);
-      return null;
     }
+    console.error(`Error Crypto ${coin}: Data kosong`);
+    return null;
   } catch (error) {
     console.error(`Error Crypto ${coin}:`, error.message);
     return null;
   }
 }
 
-function calculateSignal(data) {
+function analyzeData(data) {
   if (!data || data.length < 20) return null;
 
-  const closes = data.map(item => parseFloat(item.close));
-  const latestClose = closes[closes.length - 1];
-  const sma10 = closes.slice(-10).reduce((a, b) => a + b, 0) / 10;
-  const sma20 = closes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+  const closes = data.map(c => c.close);
+  const highs = data.map(c => c.high || c.close);
+  const lows = data.map(c => c.low || c.close);
 
-  if (latestClose > sma10 && sma10 > sma20) {
+  const rsi = ti.RSI.calculate({ values: closes, period: 14 });
+  const macd = ti.MACD.calculate({
+    values: closes,
+    fastPeriod: 12,
+    slowPeriod: 26,
+    signalPeriod: 9,
+    SimpleMAOscillator: false,
+    SimpleMASignal: false
+  });
+
+  const lastRsi = rsi[rsi.length - 1];
+  const lastMacd = macd[macd.length - 1];
+
+  if (lastRsi < 30 && lastMacd.histogram > 0) {
     return 'BUY';
-  } else if (latestClose < sma10 && sma10 < sma20) {
+  } else if (lastRsi > 70 && lastMacd.histogram < 0) {
     return 'SELL';
+  } else {
+    return null;
   }
-  return null;
 }
 
 async function main() {
-  let message = 'Sinyal Trading:\n';
-  let foundSignal = false;
+  const signals = [];
 
+  // Forex
   for (const pair of forexPairs) {
-    const data = await getForexData(pair);
-    const signal = calculateSignal(data);
+    const data = await fetchForexData(pair);
+    const signal = analyzeData(data);
     if (signal) {
-      foundSignal = true;
-      message += `${signal} ${pair} ➔ Hold 1-2 jam\n`;
+      signals.push(`Forex ${pair}: ${signal}`);
     }
   }
 
-  for (const coin of cryptoList) {
-    const data = await getCryptoData(coin);
-    const signal = calculateSignal(data);
+  // Crypto
+  for (const coin of cryptoCoins) {
+    const data = await fetchCryptoData(coin);
+    const signal = analyzeData(data);
     if (signal) {
-      foundSignal = true;
-      message += `${signal} ${coin.toUpperCase()} ➔ Hold 1-2 jam\n`;
+      signals.push(`Crypto ${coin}: ${signal}`);
     }
   }
 
-  if (!foundSignal) {
-    message = 'Yah ga ada sinyal bosku.';
-  } else {
-    message += '\nAuto generated by SmartBot.';
-  }
-
+  const message = signals.length > 0 ? `Sinyal Trading:\n\n${signals.join('\n')}` : 'Yah ga ada sinyal bosku.';
   await sendTelegram(message);
 }
 
