@@ -1,6 +1,6 @@
 require('dotenv').config();
 const axios = require('axios');
-const { SMA, EMA, RSI, MACD, BollingerBands } = require('technicalindicators');
+const { RSI } = require('technicalindicators');
 
 // === SETTING ===
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
@@ -24,40 +24,17 @@ async function fetchForexData() {
   }
 }
 
-// === ANALISA FUNCTION ===
-function simpleTechnicalAnalysis(prices) {
-  const sma = SMA.calculate({ period: 14, values: prices });
-  const ema = EMA.calculate({ period: 14, values: prices });
-  const rsi = RSI.calculate({ period: 14, values: prices });
-  const macd = MACD.calculate({
-    values: prices,
-    fastPeriod: 12,
-    slowPeriod: 26,
-    signalPeriod: 9,
-    SimpleMAOscillator: false,
-    SimpleMASignal: false
-  });
-  const bb = BollingerBands.calculate({
-    period: 20,
-    values: prices,
-    stdDev: 2
-  });
+// === RELAXED AMD LOGIC ===
+function relaxedAMDStrategy(prices) {
+  const rsiValues = RSI.calculate({ period: 14, values: prices });
+  const rsi = rsiValues[rsiValues.length - 1];
 
-  return { sma, ema, rsi, macd, bb };
-}
+  if (!rsi) return null;
 
-function detectAMDSignal(analysis, price) {
-  const latestRSI = analysis.rsi[analysis.rsi.length - 1];
-  const latestMACD = analysis.macd[analysis.macd.length - 1];
-  const latestBB = analysis.bb[analysis.bb.length - 1];
-  let action = null;
+  if (rsi < 35) return "BUY";
+  if (rsi > 65) return "SELL";
 
-  if (latestRSI < 30 && price < latestBB.lower && latestMACD.MACD < latestMACD.signal) {
-    action = "BUY";
-  } else if (latestRSI > 70 && price > latestBB.upper && latestMACD.MACD > latestMACD.signal) {
-    action = "SELL";
-  }
-  return action;
+  return null;
 }
 
 // === TELEGRAM FUNCTION ===
@@ -76,7 +53,7 @@ async function sendTelegram(message) {
 
 // === MAIN EXECUTION ===
 async function main() {
-  let message = `Sinyal Trading Forex:\n\n`;
+  let message = "Sinyal Trading Forex:\n\n";
   let hasSignal = false;
 
   const forexRates = await fetchForexData();
@@ -86,16 +63,15 @@ async function main() {
       try {
         if (forexRates[base] && forexRates[quote]) {
           const price = forexRates[quote] / forexRates[base];
-          const prices = Array(30).fill(price);
+          const prices = Array(30).fill(price); // Dummy data
 
-          const analysis = simpleTechnicalAnalysis(prices);
-          const action = detectAMDSignal(analysis, price);
+          const action = relaxedAMDStrategy(prices);
 
           if (action) {
-            const tp = (action === 'BUY') ? (price * 1.002).toFixed(4) : (price * 0.998).toFixed(4);
-            const sl = (action === 'BUY') ? (price * 0.998).toFixed(4) : (price * 1.002).toFixed(4);
+            const tp = (action === 'BUY' ? price * 1.002 : price * 0.998).toFixed(4);
+            const sl = (action === 'BUY' ? price * 0.998 : price * 1.002).toFixed(4);
 
-            message += `<b>${pair}</b>\n📊 Crypto Signal\nAksi: ${action}\nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
+            message += `<b>${pair}</b>\n📊 Forex Signal\nAksi: ${action}\nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
             hasSignal = true;
           }
         } else {
