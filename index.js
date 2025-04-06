@@ -1,135 +1,153 @@
+require('dotenv').config();
 const axios = require('axios');
-const { SMA, RSI, MACD, Stochastic } = require('technicalindicators');
+const https = require('https');
+const { SMA, EMA, RSI, MACD, BollingerBands } = require('technicalindicators');
+const { Resolver } = require('dns').promises;
 
+// === SETTING ===
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
+// Forex Pairs
 const forexPairs = [
-  "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "EUR/CHF",
-  "AUD/USD", "NZD/USD", "EUR/JPY", "GBP/JPY", "AUD/JPY"
+  "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF",
+  "EUR/CHF", "AUD/USD", "NZD/USD",
+  "EUR/JPY", "GBP/JPY", "AUD/JPY"
 ];
 
-const cryptoList = [
-  "bitcoin", "ethereum", "binance-coin", "solana", "ripple"
+// Crypto coins
+const cryptoCoins = [
+  "bitcoin", "ethereum", "binancecoin", "solana", "ripple"
 ];
 
-// Helper untuk fetch data
-async function fetchCryptoData(symbol) {
+// Mapping Crypto symbol to Binance symbol
+const binanceSymbols = {
+  "bitcoin": "BTCUSDT",
+  "ethereum": "ETHUSDT",
+  "binancecoin": "BNBUSDT",
+  "solana": "SOLUSDT",
+  "ripple": "XRPUSDT"
+};
+
+// Create Cloudflare DNS Resolver
+const resolver = new Resolver();
+resolver.setServers(['1.1.1.1']);
+
+// === FETCH FUNCTIONS ===
+async function fetchForexData() {
   try {
-    const response = await axios.get(`https://api.coincap.io/v2/assets/${symbol}`);
-    return parseFloat(response.data.data.priceUsd);
+    const res = await axios.get('https://open.er-api.com/v6/latest/USD');
+    return res.data.rates;
+  } catch (error) {
+    console.error("Error fetching Forex data:", error.message);
+    return null;
+  }
+}
+
+async function fetchCryptoPrice(symbol) {
+  try {
+    const addresses = await resolver.resolve4('api.binance.com');
+    const ip = addresses[0];
+
+    const agent = new https.Agent({
+      lookup: (hostname, options, callback) => {
+        callback(null, ip, 4);
+      }
+    });
+
+    const binanceSymbol = binanceSymbols[symbol];
+    const res = await axios.get(`https://${ip}/api/v3/ticker/price?symbol=${binanceSymbol}`, {
+      httpsAgent: agent,
+      headers: { 'Host': 'api.binance.com' }
+    });
+
+    return parseFloat(res.data.price);
   } catch (error) {
     console.error(`Error Crypto ${symbol}: ${error.message}`);
     return null;
   }
 }
 
-async function fetchForexData(pair) {
-  try {
-    const [base, quote] = pair.split('/');
-    const response = await axios.get(`https://api.exchangerate.host/latest?base=${base}&symbols=${quote}`);
-    return response.data.rates[quote];
-  } catch (error) {
-    console.error(`Error Forex ${pair}: ${error.message}`);
-    return null;
-  }
-}
-
-// Analisa teknikal
-function analyze(priceHistory) {
-  if (priceHistory.length < 20) return 'WAIT';
-
-  const rsi = RSI.calculate({ values: priceHistory, period: 14 });
+// === ANALISA FUNCTIONS ===
+function simpleTechnicalAnalysis(prices) {
+  const sma = SMA.calculate({ period: 14, values: prices });
+  const ema = EMA.calculate({ period: 14, values: prices });
+  const rsi = RSI.calculate({ period: 14, values: prices });
   const macd = MACD.calculate({
-    values: priceHistory,
+    values: prices,
     fastPeriod: 12,
     slowPeriod: 26,
     signalPeriod: 9,
     SimpleMAOscillator: false,
     SimpleMASignal: false
   });
-  const sma5 = SMA.calculate({ values: priceHistory, period: 5 });
-  const stoch = Stochastic.calculate({
-    high: priceHistory,
-    low: priceHistory,
-    close: priceHistory,
-    period: 14,
-    signalPeriod: 3
+  const bb = BollingerBands.calculate({
+    period: 20,
+    values: prices,
+    stdDev: 2
   });
 
-  const latestRSI = rsi[rsi.length - 1];
-  const latestMACD = macd[macd.length - 1];
-  const latestSMA5 = sma5[sma5.length - 1];
-  const latestStoch = stoch[stoch.length - 1];
-
-  let signals = [];
-
-  if (latestRSI < 30) signals.push('BUY');
-  else if (latestRSI > 70) signals.push('SELL');
-
-  if (latestMACD && latestMACD.histogram > 0) signals.push('BUY');
-  else if (latestMACD && latestMACD.histogram < 0) signals.push('SELL');
-
-  if (priceHistory[priceHistory.length - 1] > latestSMA5) signals.push('BUY');
-  else if (priceHistory[priceHistory.length - 1] < latestSMA5) signals.push('SELL');
-
-  if (latestStoch && latestStoch.k < 20) signals.push('BUY');
-  else if (latestStoch && latestStoch.k > 80) signals.push('SELL');
-
-  const buySignals = signals.filter(x => x === 'BUY').length;
-  const sellSignals = signals.filter(x => x === 'SELL').length;
-
-  if (buySignals > sellSignals) return 'BUY';
-  else if (sellSignals > buySignals) return 'SELL';
-  else return 'WAIT';
+  return { sma, ema, rsi, macd, bb };
 }
 
-// Kirim ke Telegram
+// === TELEGRAM FUNCTION ===
 async function sendTelegram(message) {
   try {
     await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
       chat_id: TELEGRAM_CHAT_ID,
-      text: message
+      text: message,
+      parse_mode: 'HTML'
     });
     console.log("Sinyal terkirim!");
   } catch (error) {
-    console.error(`Gagal kirim Telegram: ${error.message}`);
+    console.error("Gagal kirim Telegram:", error.message);
   }
 }
 
-// Main process
+// === MAIN EXECUTE ===
 async function main() {
-  let messages = [];
+  let message = "Sinyal Trading:\n\n";
+  let hasSignal = false;
 
-  // Forex
-  for (const pair of forexPairs) {
-    const price = await fetchForexData(pair);
-    if (price) {
-      const fakeHistory = Array(50).fill(price * (1 + (Math.random() - 0.5) * 0.02));
-      const signal = analyze(fakeHistory);
-      if (signal !== 'WAIT') {
-        messages.push(`Forex ${pair}: ${signal}`);
+  const forexRates = await fetchForexData();
+  if (forexRates) {
+    for (const pair of forexPairs) {
+      const [base, quote] = pair.split('/');
+      try {
+        if (forexRates[base] && forexRates[quote]) {
+          const price = forexRates[quote] / forexRates[base];
+          // Dummy data 30 prices untuk simulasi
+          const prices = Array(30).fill(price);
+          const analysis = simpleTechnicalAnalysis(prices);
+
+          message += `<b>${pair}</b> ➔ Price: ${price.toFixed(4)}\n`;
+          hasSignal = true;
+        } else {
+          console.error(`Error Forex ${pair}: Data kosong`);
+        }
+      } catch (err) {
+        console.error(`Error Forex ${pair}: ${err.message}`);
       }
     }
   }
 
-  // Crypto
-  for (const coin of cryptoList) {
-    const price = await fetchCryptoData(coin);
+  for (const coin of cryptoCoins) {
+    const price = await fetchCryptoPrice(coin);
     if (price) {
-      const fakeHistory = Array(50).fill(price * (1 + (Math.random() - 0.5) * 0.02));
-      const signal = analyze(fakeHistory);
-      if (signal !== 'WAIT') {
-        messages.push(`Crypto ${coin}: ${signal}`);
-      }
+      // Dummy data 30 prices untuk simulasi
+      const prices = Array(30).fill(price);
+      const analysis = simpleTechnicalAnalysis(prices);
+
+      message += `<b>${coin.toUpperCase()}</b> ➔ Price: ${price.toFixed(2)}\n`;
+      hasSignal = true;
     }
   }
 
-  if (messages.length === 0) {
-    await sendTelegram("Yah ga ada sinyal bosku.");
-  } else {
-    await sendTelegram("Auto generated by SmartBot:\n\n" + messages.join('\n'));
+  if (!hasSignal) {
+    message += "Yah ga ada sinyal bosku.";
   }
+
+  await sendTelegram(message);
 }
 
 main();
