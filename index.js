@@ -1,71 +1,35 @@
-const axios = require('axios');
-const { SMA, EMA, MACD, RSI, Stochastic, ADX } = require('technicalindicators');
 require('dotenv').config();
+const axios = require('axios');
+const { SMA, EMA, RSI, MACD, BollingerBands } = require('technicalindicators');
 
+// === SETTING ===
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
+// Forex Pairs
 const forexPairs = [
-  { from: 'EUR', to: 'USD' },
-  { from: 'GBP', to: 'USD' },
-  { from: 'USD', to: 'JPY' },
-  { from: 'USD', to: 'CHF' },
-  { from: 'EUR', to: 'CHF' },
-  { from: 'AUD', to: 'USD' },
-  { from: 'NZD', to: 'USD' },
-  { from: 'EUR', to: 'JPY' },
-  { from: 'GBP', to: 'JPY' },
-  { from: 'AUD', to: 'JPY' }
+  "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF",
+  "EUR/CHF", "AUD/USD", "NZD/USD",
+  "EUR/JPY", "GBP/JPY", "AUD/JPY"
 ];
 
-const cryptoSymbols = [
-  'bitcoin',
-  'ethereum',
-  'binancecoin',
-  'solana',
-  'ripple'
-];
-
-async function fetchForex(from, to) {
+// === FETCH FUNCTION ===
+async function fetchForexData() {
   try {
-    const url = `https://api.exchangerate.host/timeseries?start_date=${getPastDate(50)}&end_date=${getTodayDate()}&base=${from}&symbols=${to}`;
-    const { data } = await axios.get(url);
-    if (!data.rates) throw new Error('Data kosong');
-    const prices = Object.values(data.rates).map(r => r[to]);
-    return prices;
+    const res = await axios.get('https://open.er-api.com/v6/latest/USD');
+    return res.data.rates;
   } catch (error) {
-    console.error(`Error Forex ${from}/${to}: ${error.message}`);
+    console.error("Error fetching Forex data:", error.message);
     return null;
   }
 }
 
-async function fetchCrypto(symbol) {
-  try {
-    const url = `https://api.binance.com/api/v3/klines?symbol=${symbol.toUpperCase()}USDT&interval=1d&limit=50`;
-    const { data } = await axios.get(url, { timeout: 5000 });
-    const closePrices = data.map(candle => parseFloat(candle[4]));
-    return closePrices;
-  } catch (error) {
-    console.error(`Error Crypto ${symbol}: ${error.message}`);
-    return null;
-  }
-}
-
-function getTodayDate() {
-  return new Date().toISOString().split('T')[0];
-}
-
-function getPastDate(days) {
-  const date = new Date();
-  date.setDate(date.getDate() - days);
-  return date.toISOString().split('T')[0];
-}
-
-function analyze(prices) {
-  if (prices.length < 30) return null;
-  const sma = SMA.calculate({ period: 20, values: prices });
-  const ema = EMA.calculate({ period: 20, values: prices });
-  const macd = MACD.calculate({ 
+// === ANALISA FUNCTION ===
+function simpleTechnicalAnalysis(prices) {
+  const sma = SMA.calculate({ period: 14, values: prices });
+  const ema = EMA.calculate({ period: 14, values: prices });
+  const rsi = RSI.calculate({ period: 14, values: prices });
+  const macd = MACD.calculate({
     values: prices,
     fastPeriod: 12,
     slowPeriod: 26,
@@ -73,76 +37,65 @@ function analyze(prices) {
     SimpleMAOscillator: false,
     SimpleMASignal: false
   });
-  const rsi = RSI.calculate({ period: 14, values: prices });
-  const stochastic = Stochastic.calculate({
-    high: prices,
-    low: prices,
-    close: prices,
-    period: 14,
-    signalPeriod: 3
-  });
-  const adx = ADX.calculate({
-    close: prices,
-    high: prices,
-    low: prices,
-    period: 14
+  const bb = BollingerBands.calculate({
+    period: 20,
+    values: prices,
+    stdDev: 2
   });
 
-  const lastPrice = prices[prices.length - 1];
-  const lastEMA = ema[ema.length - 1];
-  const lastSMA = sma[sma.length - 1];
-  const lastRSI = rsi[rsi.length - 1];
-
-  if (lastEMA > lastSMA && lastRSI < 70) {
-    return { signal: "BUY", tp: (lastPrice * 1.01).toFixed(4), sl: (lastPrice * 0.99).toFixed(4) };
-  } else if (lastEMA < lastSMA && lastRSI > 30) {
-    return { signal: "SELL", tp: (lastPrice * 0.99).toFixed(4), sl: (lastPrice * 1.01).toFixed(4) };
-  } else {
-    return null;
-  }
+  return { sma, ema, rsi, macd, bb };
 }
 
+// === TELEGRAM FUNCTION ===
 async function sendTelegram(message) {
-  const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
   try {
-    await axios.post(url, {
+    await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
       chat_id: TELEGRAM_CHAT_ID,
-      text: message
+      text: message,
+      parse_mode: 'HTML'
     });
-    console.log("Sinyal terkirim!");
+    console.log("Sinyal Forex berhasil dikirim!");
   } catch (error) {
     console.error("Gagal kirim Telegram:", error.message);
   }
 }
 
-async function runBot() {
-  let messages = [];
+// === MAIN EXECUTION ===
+async function main() {
+  let message = "Sinyal Trading Forex:\n\n";
+  let hasSignal = false;
 
-  for (const pair of forexPairs) {
-    const prices = await fetchForex(pair.from, pair.to);
-    if (prices) {
-      const analysis = analyze(prices);
-      if (analysis) {
-        messages.push(`Forex ${pair.from}/${pair.to} - ${analysis.signal}\nTP: ${analysis.tp}, SL: ${analysis.sl}`);
+  const forexRates = await fetchForexData();
+  if (forexRates) {
+    for (const pair of forexPairs) {
+      const [base, quote] = pair.split('/');
+      try {
+        if (forexRates[base] && forexRates[quote]) {
+          const price = forexRates[quote] / forexRates[base];
+          const prices = Array(30).fill(price); // Dummy data
+
+          const analysis = simpleTechnicalAnalysis(prices);
+
+          // Ambil nilai TP dan SL dummy contoh
+          const tp = (price * 1.002).toFixed(4); // +0.2%
+          const sl = (price * 0.998).toFixed(4); // -0.2%
+
+          message += `<b>${pair}</b>\nPrice: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
+          hasSignal = true;
+        } else {
+          console.error(`Data kosong untuk pasangan ${pair}`);
+        }
+      } catch (error) {
+        console.error(`Error processing Forex ${pair}:`, error.message);
       }
     }
   }
 
-  for (const symbol of cryptoSymbols) {
-    const prices = await fetchCrypto(symbol);
-    if (prices) {
-      const analysis = analyze(prices);
-      if (analysis) {
-        messages.push(`Crypto ${symbol.toUpperCase()} - ${analysis.signal}\nTP: ${analysis.tp}, SL: ${analysis.sl}`);
-      }
-    }
+  if (!hasSignal) {
+    message += "Tidak ada sinyal yang ditemukan.";
   }
 
-  if (messages.length === 0) {
-    await sendTelegram('Yah ga ada sinyal bosku.');
-  } else {
-    await sendTelegram(messages.join('\n\n'));
-  }
+  await sendTelegram(message);
 }
 
-runBot();
+main();
