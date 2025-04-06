@@ -76,12 +76,28 @@ async function main() {
 
           const analysis = simpleTechnicalAnalysis(prices);
 
-          // Ambil nilai TP dan SL dummy contoh
-          const tp = (price * 1.002).toFixed(4); // +0.2%
-          const sl = (price * 0.998).toFixed(4); // -0.2%
+          const latestRSI = analysis.rsi[analysis.rsi.length - 1];
+          const latestSMA = analysis.sma[analysis.sma.length - 1];
 
-          message += `<b>${pair}</b>\n📊 Crypto Signal\nAksi: \nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
-          hasSignal = true;
+          // Tentukan aksi
+          let action = '';
+          if (latestRSI && latestSMA) {
+            if (latestRSI < 30 && price < latestSMA) {
+              action = 'BUY';
+            } else if (latestRSI > 70 && price > latestSMA) {
+              action = 'SELL';
+            }
+          }
+
+          if (action) {
+            // Ambil nilai TP dan SL
+            const tp = (action === 'BUY' ? price * 1.002 : price * 0.998).toFixed(4);
+            const sl = (action === 'BUY' ? price * 0.998 : price * 1.002).toFixed(4);
+
+            message += `<b>${pair}</b>\n📊 Crypto Signal\nAksi: <b>${action}</b>\nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
+            hasSignal = true;
+          }
+
         } else {
           console.error(`Data kosong untuk pasangan ${pair}`);
         }
