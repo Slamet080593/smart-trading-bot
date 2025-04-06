@@ -46,19 +46,18 @@ function simpleTechnicalAnalysis(prices) {
   return { sma, ema, rsi, macd, bb };
 }
 
-// === AMD SETUP DETECTION ===
-function detectAMD(prices, analysis) {
+function detectAMDSignal(analysis, price) {
   const latestRSI = analysis.rsi[analysis.rsi.length - 1];
-  const latestBB = analysis.bb[analysis.bb.length - 1];
   const latestMACD = analysis.macd[analysis.macd.length - 1];
+  const latestBB = analysis.bb[analysis.bb.length - 1];
+  let action = null;
 
-  const price = prices[prices.length - 1];
-
-  const accumulation = (analysis.bb.length > 0 && (latestBB.upper - latestBB.lower) / latestBB.lower < 0.01);
-  const manipulation = (price > latestBB.upper || price < latestBB.lower);
-  const directionalMove = (latestMACD && Math.abs(latestMACD.MACD - latestMACD.signal) > 0.001);
-
-  return accumulation && manipulation && directionalMove;
+  if (latestRSI < 30 && price < latestBB.lower && latestMACD.MACD < latestMACD.signal) {
+    action = "BUY";
+  } else if (latestRSI > 70 && price > latestBB.upper && latestMACD.MACD > latestMACD.signal) {
+    action = "SELL";
+  }
+  return action;
 }
 
 // === TELEGRAM FUNCTION ===
@@ -77,8 +76,7 @@ async function sendTelegram(message) {
 
 // === MAIN EXECUTION ===
 async function main() {
-  let message = "Sinyal Trading Forex:
-\n";
+  let message = `Sinyal Trading Forex:\n\n`;
   let hasSignal = false;
 
   const forexRates = await fetchForexData();
@@ -88,18 +86,15 @@ async function main() {
       try {
         if (forexRates[base] && forexRates[quote]) {
           const price = forexRates[quote] / forexRates[base];
-          const prices = Array(30).fill(price); // Dummy data
+          const prices = Array(30).fill(price);
 
           const analysis = simpleTechnicalAnalysis(prices);
-          const amdSignal = detectAMD(prices, analysis);
+          const action = detectAMDSignal(analysis, price);
 
-          // Ambil nilai TP dan SL dummy contoh
-          const tp = (price * 1.002).toFixed(4); // +0.2%
-          const sl = (price * 0.998).toFixed(4); // -0.2%
+          if (action) {
+            const tp = (action === 'BUY') ? (price * 1.002).toFixed(4) : (price * 0.998).toFixed(4);
+            const sl = (action === 'BUY') ? (price * 0.998).toFixed(4) : (price * 1.002).toFixed(4);
 
-          const action = amdSignal ? (price < analysis.bb[analysis.bb.length - 1].lower ? 'BUY' : 'SELL') : 'No clear signal';
-
-          if (amdSignal) {
             message += `<b>${pair}</b>\n📊 Crypto Signal\nAksi: ${action}\nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
             hasSignal = true;
           }
