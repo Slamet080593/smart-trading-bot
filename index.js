@@ -1,6 +1,6 @@
 require('dotenv').config();
 const axios = require('axios');
-const { SMA, EMA, RSI, MACD, BollingerBands, ADX } = require('technicalindicators');
+const { SMA, EMA, RSI, MACD, BollingerBands } = require('technicalindicators');
 
 // === SETTING ===
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
@@ -13,26 +13,19 @@ const forexPairs = [
   "EUR/JPY", "GBP/JPY", "AUD/JPY"
 ];
 
-// === FETCH FUNCTION (rebuild strategy) ===
-async function fetchHistoricalRatesFromUSD(symbols) {
-  const end = new Date();
-  const start = new Date();
-  start.setDate(end.getDate() - 30);
-  const startDate = start.toISOString().split('T')[0];
-  const endDate = end.toISOString().split('T')[0];
-
-  const url = `https://api.exchangerate.host/timeseries?start_date=${startDate}&end_date=${endDate}&base=USD&symbols=${symbols.join(',')}`;
+// === FETCH FUNCTION ===
+async function fetchForexData() {
   try {
-    const res = await axios.get(url);
-    return res.data.rates; // result is an object: { '2024-04-01': { EUR: 0.9, JPY: 110 }, ... }
+    const res = await axios.get('https://open.er-api.com/v6/latest/USD');
+    return res.data.rates;
   } catch (error) {
-    console.error(`Gagal fetch data exchangerate.host:`, error.message);
+    console.error("Error fetching Forex data:", error.message);
     return null;
   }
 }
 
 // === ANALISA FUNCTION ===
-function technicalAnalysis(prices) {
+function simpleTechnicalAnalysis(prices) {
   const sma = SMA.calculate({ period: 14, values: prices });
   const ema = EMA.calculate({ period: 14, values: prices });
   const rsi = RSI.calculate({ period: 14, values: prices });
@@ -44,24 +37,13 @@ function technicalAnalysis(prices) {
     SimpleMAOscillator: false,
     SimpleMASignal: false
   });
-  const bb = BollingerBands.calculate({ period: 20, values: prices, stdDev: 2 });
-  const adx = ADX.calculate({ close: prices, high: prices, low: prices, period: 14 });
+  const bb = BollingerBands.calculate({
+    period: 20,
+    values: prices,
+    stdDev: 2
+  });
 
-  return { sma, ema, rsi, macd, bb, adx };
-}
-
-// === DECISION FUNCTION ===
-function getTradeSignal({ rsi, bb, macd }, price) {
-  const lastRSI = rsi[rsi.length - 1];
-  const lastBB = bb[bb.length - 1];
-  const lastMACD = macd[macd.length - 1];
-
-  if (lastRSI < 30 && price < lastBB.lower && lastMACD.MACD > lastMACD.signal) {
-    return 'BUY';
-  } else if (lastRSI > 70 && price > lastBB.upper && lastMACD.MACD < lastMACD.signal) {
-    return 'SELL';
-  }
-  return null;
+  return { sma, ema, rsi, macd, bb };
 }
 
 // === TELEGRAM FUNCTION ===
@@ -80,56 +62,32 @@ async function sendTelegram(message) {
 
 // === MAIN EXECUTION ===
 async function main() {
-  let message = "<b>Sinyal Trading Forex:</b>\n\n";
+  let message = "Sinyal Trading Forex:\n\n";
   let hasSignal = false;
 
-  // ambil seluruh unique symbol dari pair
-  const allSymbols = Array.from(
-    new Set(forexPairs.flatMap(p => p.split('/')))
-  );
+  const forexRates = await fetchForexData();
+  if (forexRates) {
+    for (const pair of forexPairs) {
+      const [base, quote] = pair.split('/');
+      try {
+        if (forexRates[base] && forexRates[quote]) {
+          const price = forexRates[quote] / forexRates[base];
+          const prices = Array(30).fill(price); // Dummy data
 
-  const historicalRates = await fetchHistoricalRatesFromUSD(allSymbols);
-  if (!historicalRates) return;
+          const analysis = simpleTechnicalAnalysis(prices);
 
-  for (const pair of forexPairs) {
-    const [base, quote] = pair.split('/');
-    try {
-      const prices = [];
+          // Ambil nilai TP dan SL dummy contoh
+          const tp = (price * 1.002).toFixed(4); // +0.2%
+          const sl = (price * 0.998).toFixed(4); // -0.2%
 
-      // hitung base/quote berdasarkan data dari USD
-      for (const day of Object.keys(historicalRates)) {
-        const rates = historicalRates[day];
-        if (rates[base] && rates[quote]) {
-          const baseToUSD = 1 / rates[base];
-          const quoteToUSD = 1 / rates[quote];
-          const price = quoteToUSD / baseToUSD;
-          prices.push(price);
+          message += `<b>${pair}</b>\n📊 Crypto Signal\nAksi: \nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
+          hasSignal = true;
+        } else {
+          console.error(`Data kosong untuk pasangan ${pair}`);
         }
+      } catch (error) {
+        console.error(`Error processing Forex ${pair}:`, error.message);
       }
-
-      if (prices.length < 30) {
-        console.log(`Data tidak cukup untuk ${pair}`);
-        continue;
-      }
-
-      const price = prices[prices.length - 1];
-      const analysis = technicalAnalysis(prices);
-      const signal = getTradeSignal(analysis, price);
-
-      if (signal) {
-        const tp = signal === 'BUY' ? price * 1.002 : price * 0.998;
-        const sl = signal === 'BUY' ? price * 0.998 : price * 1.002;
-
-        message += `
-<b>${pair}</b>
-📊 Aksi: <b>${signal}</b>
-🎯 Entry: ${price.toFixed(4)}
-🎯 TP: ${tp.toFixed(4)}
-🛑 SL: ${sl.toFixed(4)}\n`;
-        hasSignal = true;
-      }
-    } catch (err) {
-      console.error(`Gagal proses ${pair}:`, err.message);
     }
   }
 
