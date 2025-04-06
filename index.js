@@ -13,21 +13,20 @@ const forexPairs = [
   "EUR/JPY", "GBP/JPY", "AUD/JPY"
 ];
 
-// === FETCH FUNCTION ===
-async function fetchHistoricalRates(base, quote) {
+// === FETCH FUNCTION (rebuild strategy) ===
+async function fetchHistoricalRatesFromUSD(symbols) {
   const end = new Date();
   const start = new Date();
   start.setDate(end.getDate() - 30);
   const startDate = start.toISOString().split('T')[0];
   const endDate = end.toISOString().split('T')[0];
 
-  const url = `https://api.exchangerate.host/timeseries?start_date=${startDate}&end_date=${endDate}&base=${base}&symbols=${quote}`;
+  const url = `https://api.exchangerate.host/timeseries?start_date=${startDate}&end_date=${endDate}&base=USD&symbols=${symbols.join(',')}`;
   try {
     const res = await axios.get(url);
-    const rates = Object.values(res.data.rates).map(day => day[quote]);
-    return rates;
+    return res.data.rates; // result is an object: { '2024-04-01': { EUR: 0.9, JPY: 110 }, ... }
   } catch (error) {
-    console.error(`Gagal fetch data untuk ${base}/${quote}:`, error.message);
+    console.error(`Gagal fetch data exchangerate.host:`, error.message);
     return null;
   }
 }
@@ -51,20 +50,6 @@ function technicalAnalysis(prices) {
   return { sma, ema, rsi, macd, bb, adx };
 }
 
-// === TELEGRAM FUNCTION ===
-async function sendTelegram(message) {
-  try {
-    await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
-      chat_id: TELEGRAM_CHAT_ID,
-      text: message,
-      parse_mode: 'HTML'
-    });
-    console.log("Sinyal Forex berhasil dikirim!");
-  } catch (error) {
-    console.error("Gagal kirim Telegram:", error.message);
-  }
-}
-
 // === DECISION FUNCTION ===
 function getTradeSignal({ rsi, bb, macd }, price) {
   const lastRSI = rsi[rsi.length - 1];
@@ -79,31 +64,72 @@ function getTradeSignal({ rsi, bb, macd }, price) {
   return null;
 }
 
+// === TELEGRAM FUNCTION ===
+async function sendTelegram(message) {
+  try {
+    await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+      chat_id: TELEGRAM_CHAT_ID,
+      text: message,
+      parse_mode: 'HTML'
+    });
+    console.log("Sinyal Forex berhasil dikirim!");
+  } catch (error) {
+    console.error("Gagal kirim Telegram:", error.message);
+  }
+}
+
 // === MAIN EXECUTION ===
 async function main() {
   let message = "<b>Sinyal Trading Forex:</b>\n\n";
   let hasSignal = false;
 
+  // ambil seluruh unique symbol dari pair
+  const allSymbols = Array.from(
+    new Set(forexPairs.flatMap(p => p.split('/')))
+  );
+
+  const historicalRates = await fetchHistoricalRatesFromUSD(allSymbols);
+  if (!historicalRates) return;
+
   for (const pair of forexPairs) {
     const [base, quote] = pair.split('/');
-    const prices = await fetchHistoricalRates(base, quote);
-    if (!prices || prices.length < 30) continue;
+    try {
+      const prices = [];
 
-    const price = prices[prices.length - 1];
-    const analysis = technicalAnalysis(prices);
-    const signal = getTradeSignal(analysis, price);
+      // hitung base/quote berdasarkan data dari USD
+      for (const day of Object.keys(historicalRates)) {
+        const rates = historicalRates[day];
+        if (rates[base] && rates[quote]) {
+          const baseToUSD = 1 / rates[base];
+          const quoteToUSD = 1 / rates[quote];
+          const price = quoteToUSD / baseToUSD;
+          prices.push(price);
+        }
+      }
 
-    if (signal) {
-      const tp = (signal === 'BUY') ? price * 1.002 : price * 0.998;
-      const sl = (signal === 'BUY') ? price * 0.998 : price * 1.002;
+      if (prices.length < 30) {
+        console.log(`Data tidak cukup untuk ${pair}`);
+        continue;
+      }
 
-      message += `
+      const price = prices[prices.length - 1];
+      const analysis = technicalAnalysis(prices);
+      const signal = getTradeSignal(analysis, price);
+
+      if (signal) {
+        const tp = signal === 'BUY' ? price * 1.002 : price * 0.998;
+        const sl = signal === 'BUY' ? price * 0.998 : price * 1.002;
+
+        message += `
 <b>${pair}</b>
 📊 Aksi: <b>${signal}</b>
 🎯 Entry: ${price.toFixed(4)}
 🎯 TP: ${tp.toFixed(4)}
 🛑 SL: ${sl.toFixed(4)}\n`;
-      hasSignal = true;
+        hasSignal = true;
+      }
+    } catch (err) {
+      console.error(`Gagal proses ${pair}:`, err.message);
     }
   }
 
