@@ -1,9 +1,13 @@
 {
-  "name": "trading-bot",
+  "name": "smart-trading-bot",
   "version": "1.0.0",
-  "description": "Trading Signal Bot",
+  "description": "Auto trading signal bot",
   "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
-    "axios": "^1.6.5"
+    "axios": "^1.6.7",
+    "technicalindicators": "^3.1.0"
   }
 }
