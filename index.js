@@ -1,39 +1,41 @@
 require('dotenv').config();
 const axios = require('axios');
-const { SMA, EMA, RSI, MACD, BollingerBands } = require('technicalindicators');
+const { SMA, EMA, RSI, MACD, BollingerBands, ADX } = require('technicalindicators');
 
 // === SETTING ===
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const TWELVE_DATA_API_KEY = process.env.TWELVE_DATA_API_KEY;
 
+// Forex Pairs
 const forexPairs = [
   "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF",
   "EUR/CHF", "AUD/USD", "NZD/USD",
   "EUR/JPY", "GBP/JPY", "AUD/JPY"
 ];
 
-// === FETCH HISTORICAL DATA ===
-async function fetchHistoricalPrices(pair) {
-  const symbol = pair.replace("/", "");
-  const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=1h&outputsize=60&apikey=${TWELVE_DATA_API_KEY}`;
+// === FETCH FUNCTION ===
+async function fetchHistoricalRates(base, quote) {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - 30);
+  const startDate = start.toISOString().split('T')[0];
+  const endDate = end.toISOString().split('T')[0];
 
+  const url = `https://api.exchangerate.host/timeseries?start_date=${startDate}&end_date=${endDate}&base=${base}&symbols=${quote}`;
   try {
     const res = await axios.get(url);
-    const data = res.data?.values;
-    if (!data) throw new Error(res.data.message || "No data");
-    const prices = data.map(item => parseFloat(item.close)).reverse();
-    return prices;
-  } catch (err) {
-    console.error(`❌ Error fetch ${pair}:`, err.message);
+    const rates = Object.values(res.data.rates).map(day => day[quote]);
+    return rates;
+  } catch (error) {
+    console.error(`Gagal fetch data untuk ${base}/${quote}:`, error.message);
     return null;
   }
 }
 
-// === ANALISIS ===
-function simpleTechnicalAnalysis(prices) {
-  const sma50 = SMA.calculate({ period: 50, values: prices });
-  const ema14 = EMA.calculate({ period: 14, values: prices });
+// === ANALISA FUNCTION ===
+function technicalAnalysis(prices) {
+  const sma = SMA.calculate({ period: 14, values: prices });
+  const ema = EMA.calculate({ period: 14, values: prices });
   const rsi = RSI.calculate({ period: 14, values: prices });
   const macd = MACD.calculate({
     values: prices,
@@ -43,16 +45,13 @@ function simpleTechnicalAnalysis(prices) {
     SimpleMAOscillator: false,
     SimpleMASignal: false
   });
-  const bb = BollingerBands.calculate({
-    period: 20,
-    values: prices,
-    stdDev: 2
-  });
+  const bb = BollingerBands.calculate({ period: 20, values: prices, stdDev: 2 });
+  const adx = ADX.calculate({ close: prices, high: prices, low: prices, period: 14 });
 
-  return { sma50, ema14, rsi, macd, bb };
+  return { sma, ema, rsi, macd, bb, adx };
 }
 
-// === TELEGRAM ===
+// === TELEGRAM FUNCTION ===
 async function sendTelegram(message) {
   try {
     await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
@@ -60,50 +59,50 @@ async function sendTelegram(message) {
       text: message,
       parse_mode: 'HTML'
     });
-    console.log("✅ Sinyal dikirim");
-  } catch (err) {
-    console.error("❌ Gagal kirim Telegram:", err.message);
+    console.log("Sinyal Forex berhasil dikirim!");
+  } catch (error) {
+    console.error("Gagal kirim Telegram:", error.message);
   }
 }
 
-// === SIGNAL LOGIC ===
-function generateSignal(price, rsi, macd, bb) {
-  const macdHist = macd[macd.length - 1]?.histogram || 0;
-  const rsiVal = rsi[rsi.length - 1];
-  const bbLast = bb[bb.length - 1];
+// === DECISION FUNCTION ===
+function getTradeSignal({ rsi, bb, macd }, price) {
+  const lastRSI = rsi[rsi.length - 1];
+  const lastBB = bb[bb.length - 1];
+  const lastMACD = macd[macd.length - 1];
 
-  if (rsiVal < 30 && macdHist > 0 && price < bbLast.lower) {
-    return "BUY";
-  } else if (rsiVal > 70 && macdHist < 0 && price > bbLast.upper) {
-    return "SELL";
+  if (lastRSI < 30 && price < lastBB.lower && lastMACD.MACD > lastMACD.signal) {
+    return 'BUY';
+  } else if (lastRSI > 70 && price > lastBB.upper && lastMACD.MACD < lastMACD.signal) {
+    return 'SELL';
   }
   return null;
 }
 
-// === MAIN ===
+// === MAIN EXECUTION ===
 async function main() {
-  let message = "📊 <b>Sinyal Trading Forex:</b>\n\n";
+  let message = "<b>Sinyal Trading Forex:</b>\n\n";
   let hasSignal = false;
 
   for (const pair of forexPairs) {
-    const prices = await fetchHistoricalPrices(pair);
+    const [base, quote] = pair.split('/');
+    const prices = await fetchHistoricalRates(base, quote);
     if (!prices || prices.length < 30) continue;
 
-    const analysis = simpleTechnicalAnalysis(prices);
     const price = prices[prices.length - 1];
-    const signal = generateSignal(price, analysis.rsi, analysis.macd, analysis.bb);
+    const analysis = technicalAnalysis(prices);
+    const signal = getTradeSignal(analysis, price);
 
     if (signal) {
-      const tp = signal === 'BUY' ? price * 1.002 : price * 0.998;
-      const sl = signal === 'BUY' ? price * 0.998 : price * 1.002;
+      const tp = (signal === 'BUY') ? price * 1.002 : price * 0.998;
+      const sl = (signal === 'BUY') ? price * 0.998 : price * 1.002;
 
       message += `
 <b>${pair}</b>
-Aksi: ${signal}
-Entry: ${price.toFixed(4)}
-TP: ${tp.toFixed(4)}
-SL: ${sl.toFixed(4)}\n\n`;
-
+📊 Aksi: <b>${signal}</b>
+🎯 Entry: ${price.toFixed(4)}
+🎯 TP: ${tp.toFixed(4)}
+🛑 SL: ${sl.toFixed(4)}\n`;
       hasSignal = true;
     }
   }
