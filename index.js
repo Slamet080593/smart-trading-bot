@@ -94,7 +94,7 @@ async function main() {
             const tp = (action === 'BUY' ? price * 1.002 : price * 0.998).toFixed(4);
             const sl = (action === 'BUY' ? price * 0.998 : price * 1.002).toFixed(4);
 
-            message += `<b>${pair}</b>\n📊 Crypto Signal\nAksi: <b>${action}</b>\nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
+            message += `<b>${pair}</b>\n📊 Forex Signal\nAksi: <b>${action}</b>\nEntry: ${price.toFixed(4)}\nTP: ${tp}\nSL: ${sl}\n\n`;
             hasSignal = true;
           }
 
