@@ -1,25 +1,21 @@
-name: Trading Signal Bot
+name: Run Trading Bot
 
 on:
   schedule:
-    - cron: '0 * * * *' # setiap 1 jam
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 jobs:
-  run-bot:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-
-      - name: Install Dependencies
+          node-version: '20'
+      - name: Install dependencies
         run: npm install
-
       - name: Run Bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
